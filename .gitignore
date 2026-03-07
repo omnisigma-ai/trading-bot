@@ -1,0 +1,26 @@
+# Environment
+.env
+*.env
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Secrets (never commit)
+config/secrets.yaml
+
+# Data & logs
+logs/*.db
+logs/*.log
+backtest/results/
+*.csv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,28 @@
+mode: paper          # paper | live
+
+pairs:
+  - GBPJPY
+  - AUDJPY
+
+risk_per_trade: 0.01  # 1% of account balance
+
+strategy:
+  asian_range_hours: 6      # hours of candles to define the Asian range
+  pip_buffer: 5             # pips above/below range for entry + SL buffer
+  tp_multiplier: 2.0        # TP = SL distance × this value
+  max_trade_duration_hours: 6  # time-based exit if still open
+
+schedule:
+  time: "17:00"             # 5pm Sydney time
+  timezone: "Australia/Sydney"
+
+ib:
+  host: "127.0.0.1"
+  paper_port: 7497
+  live_port: 7496
+  client_id: 1
+
+discord:
+  webhook_url: "YOUR_DISCORD_WEBHOOK_URL_HERE"
+
+db_path: "logs/trades.db"
