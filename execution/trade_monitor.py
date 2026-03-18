@@ -23,7 +23,7 @@ from ib_insync import IB, Fill, Trade
 
 from execution.ib_trader import BreakoutOrderGroup
 from logs.trade_logger import TradeLogger
-from notifications import discord_notifier as discord
+from notifications import telegram_notifier as notify
 from strategy.london_breakout import PIP_SIZE
 from risk.position_sizer import pip_value_per_lot
 
@@ -44,14 +44,16 @@ class TradeMonitor:
         self,
         ib: IB,
         logger: TradeLogger,
-        webhook_url: str,
+        bot_token: str,
+        chat_id: str,
         order_groups: list[BreakoutOrderGroup],
         quote_per_usd: float = 150.0,
         usd_aud_rate: float = 1.54,
     ):
         self.ib = ib
         self.logger = logger
-        self.webhook_url = webhook_url
+        self.bot_token = bot_token
+        self.chat_id = chat_id
         self.quote_per_usd = quote_per_usd
         self.usd_aud_rate = usd_aud_rate
 
@@ -105,7 +107,7 @@ class TradeMonitor:
         for r in self._daily_results:
             if r["pair"] not in seen_pairs:
                 seen_pairs.add(r["pair"])
-        discord.notify_daily_summary(self.webhook_url, self._daily_results)
+        notify.notify_daily_summary(self.bot_token, self.chat_id, self._daily_results)
         print("[Monitor] Trade monitor stopped.")
 
     # ── event handlers ────────────────────────────────────────────────────────
@@ -157,7 +159,7 @@ class TradeMonitor:
                 ib_exec_id=str(fill.execution.execId) if fill.execution.execId else None,
             )
 
-            discord.notify_order_filled(self.webhook_url, group.pair, side, fill_price)
+            notify.notify_order_filled(self.bot_token, self.chat_id, group.pair, side, fill_price)
             print(f"[Monitor] Entry filled: {group.pair} {side} @ {fill_price} (slippage: {slippage_pips:+.1f} pips)")
 
         # TP filled → trade won
@@ -187,7 +189,7 @@ class TradeMonitor:
                 ib_exec_id=str(fill.execution.execId) if fill.execution.execId else None,
             )
 
-            discord.notify_tp_hit(self.webhook_url, group.pair, side, pips, pnl)
+            notify.notify_tp_hit(self.bot_token, self.chat_id, group.pair, side, pips, pnl)
             self._resolved_entries.add(entry_id)
             self._daily_results.append({"pair": group.pair, "result": "TP", "pips": pips, "pnl_usd": pnl})
             print(f"[Monitor] TP hit: {group.pair} {side} @ {fill_price} | +{pips:.1f} pips | +${pnl:.2f} (A${pnl_aud:.2f})")
@@ -219,7 +221,7 @@ class TradeMonitor:
                 ib_exec_id=str(fill.execution.execId) if fill.execution.execId else None,
             )
 
-            discord.notify_sl_hit(self.webhook_url, group.pair, side, abs(pips), pnl)
+            notify.notify_sl_hit(self.bot_token, self.chat_id, group.pair, side, abs(pips), pnl)
             self._resolved_entries.add(entry_id)
             self._daily_results.append({"pair": group.pair, "result": "SL", "pips": abs(pips), "pnl_usd": pnl})
             print(f"[Monitor] SL hit: {group.pair} {side} @ {fill_price} | {pips:.1f} pips | ${pnl:.2f} (A${pnl_aud:.2f})")
@@ -263,7 +265,7 @@ class TradeMonitor:
                 event_type="EXPIRED", event_time=datetime.utcnow().isoformat(),
                 order_type="ENTRY", notes="GTD expired — no breakout",
             )
-            discord.notify_no_signal(self.webhook_url, group.pair, "no breakout today")
+            notify.notify_no_signal(self.bot_token, self.chat_id, group.pair, "no breakout today")
             self._resolved_entries.add(order_id)
             self._daily_results.append({"pair": group.pair, "result": "NO_SIGNAL", "pips": 0, "pnl_usd": 0})
             print(f"[Monitor] No trigger: {group.pair} {side} order expired")

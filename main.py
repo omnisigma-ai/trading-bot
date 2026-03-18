@@ -14,7 +14,7 @@ Flow per session:
   7. Log signals to DB (traded and skipped)
   8. Start TradeMonitor — subscribes to IB fill/cancel events
   9. Keep connection alive for max_trade_duration_hours
-  10. Monitor fires Discord alerts + updates SQLite on every fill/expiry
+  10. Monitor fires Telegram alerts + updates SQLite on every fill/expiry
   11. Send daily summary, disconnect
 
 Usage:
@@ -35,7 +35,7 @@ from data.data_fetcher import fetch_historical
 from execution.ib_trader import IBTrader
 from execution.trade_monitor import TradeMonitor
 from logs.trade_logger import TradeLogger
-from notifications import discord_notifier as discord
+from notifications import telegram_notifier as notify
 from risk.daily_limits import LimitBreached, check_limits
 from risk.position_sizer import (
     calculate_lot_size,
@@ -55,7 +55,9 @@ def run_strategy(config: dict) -> None:
     risk_pct = config["risk_per_trade"]
     strategy_cfg = config["strategy"]
     ib_cfg = config["ib"]
-    webhook_url = config["discord"]["webhook_url"]
+    tg_cfg = config.get("telegram", {})
+    bot_token = tg_cfg.get("bot_token", "")
+    chat_id = str(tg_cfg.get("chat_id", ""))
     db_path = config.get("db_path", "logs/trades.db")
     session_hours = strategy_cfg["max_trade_duration_hours"]
     limits_cfg = config.get("risk_limits", {})
@@ -113,7 +115,7 @@ def run_strategy(config: dict) -> None:
             )
         except LimitBreached as e:
             print(f"[Risk] Limit breached — skipping session: {e}")
-            discord.notify_error(webhook_url, str(e), fatal=False)
+            notify.notify_error(bot_token, chat_id, str(e), fatal=False)
             # Log skipped signals for all pairs
             now_utc = pd.Timestamp.now("UTC")
             for pair in pairs:
@@ -135,7 +137,7 @@ def run_strategy(config: dict) -> None:
                 open_symbols = [p["symbol"] for p in trader.get_open_positions()]
                 if pair[:3].upper() in open_symbols:
                     print(f"[Strategy] {pair}: Skipping — open position already exists")
-                    discord.notify_error(webhook_url, f"{pair}: Skipped — open position already exists")
+                    notify.notify_error(bot_token, chat_id, f"{pair}: Skipped — open position already exists")
                     logger.log_signal(
                         pair=pair,
                         signal_date=now_utc.strftime("%Y-%m-%d"),
@@ -155,7 +157,7 @@ def run_strategy(config: dict) -> None:
 
                 if not signals:
                     print(f"[Strategy] {pair}: No signal (range too tight)")
-                    discord.notify_no_signal(webhook_url, pair, "range too tight")
+                    notify.notify_no_signal(bot_token, chat_id, pair, "range too tight")
                     logger.log_signal(
                         pair=pair,
                         signal_date=now_utc.strftime("%Y-%m-%d"),
@@ -185,7 +187,7 @@ def run_strategy(config: dict) -> None:
                 if not is_viable:
                     reason = f"commission_too_high: {comm_pct*100:.1f}% of risk (max {max_comm_pct*100:.0f}%)"
                     print(f"[Risk] {pair}: Skipping — {reason}")
-                    discord.notify_no_signal(webhook_url, pair, reason)
+                    notify.notify_no_signal(bot_token, chat_id, pair, reason)
                     pip = PIP_SIZE.get(pair.upper(), 0.01)
                     range_size = (buy_signal.range_high - buy_signal.range_low) / pip
                     logger.log_signal(
@@ -256,10 +258,10 @@ def run_strategy(config: dict) -> None:
                         notes=f"{label} STOP LMT @ {sig.entry}",
                     )
 
-                # Discord: notify both pending orders
+                # Telegram: notify both pending orders
                 for signal in [buy_signal, sell_signal]:
-                    discord.notify_order_placed(
-                        webhook_url=webhook_url, pair=pair, direction=signal.direction,
+                    notify.notify_order_placed(
+                        bot_token=bot_token, chat_id=chat_id, pair=pair, direction=signal.direction,
                         entry=signal.entry, sl=signal.stop_loss, tp=signal.take_profit,
                         sl_pips=signal.sl_pips, tp_pips=signal.tp_pips,
                         lot_size=lot_size, risk_usd=risk_usd,
@@ -269,11 +271,11 @@ def run_strategy(config: dict) -> None:
 
             except Exception as e:
                 print(f"[ERROR] {pair}: {e}")
-                discord.notify_error(webhook_url, f"{pair}: `{e}`")
+                notify.notify_error(bot_token, chat_id, f"{pair}: `{e}`")
 
         if not order_groups:
             print("[Bot] No orders placed today — nothing to monitor.")
-            discord.notify_daily_summary(webhook_url, [
+            notify.notify_daily_summary(bot_token, chat_id, [
                 {"pair": p, "result": "NO_SIGNAL", "pips": 0, "pnl_usd": 0} for p in pairs
             ])
             return
@@ -282,7 +284,8 @@ def run_strategy(config: dict) -> None:
         monitor = TradeMonitor(
             ib=trader.ib,
             logger=logger,
-            webhook_url=webhook_url,
+            bot_token=bot_token,
+            chat_id=chat_id,
             order_groups=order_groups,
             quote_per_usd=usdjpy,
             usd_aud_rate=usd_aud_rate,
@@ -296,7 +299,7 @@ def run_strategy(config: dict) -> None:
 
     except Exception as e:
         print(f"[FATAL] Strategy run failed: {e}")
-        discord.notify_error(webhook_url, f"FATAL: `{e}`", fatal=True)
+        notify.notify_error(bot_token, chat_id, f"FATAL: `{e}`", fatal=True)
     finally:
         trader.disconnect()
         logger.close()
