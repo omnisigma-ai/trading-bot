@@ -10,6 +10,9 @@ risk_limits:
   daily_loss_limit: 0.02        # stop trading if down 2% today
   weekly_loss_limit: 0.05       # stop trading if down 5% this week
   max_consecutive_losses: 3     # pause after 3 SL hits in a row
+  min_account_balance: 3000     # USD — don't trade below this balance
+  max_commission_pct: 0.10      # skip trade if commission > 10% of risk amount
+  commission_per_lot: 2.0       # estimated IBKR forex commission per lot per side (USD)
 
 strategy:
   asian_range_hours: 6      # hours of candles to define the Asian range
@@ -29,5 +32,8 @@ ib:
 
 discord:
   webhook_url: "YOUR_DISCORD_WEBHOOK_URL_HERE"
+
+tax:
+  default_usd_aud_rate: 1.54  # fallback if IB rate unavailable
 
 db_path: "logs/trades.db"

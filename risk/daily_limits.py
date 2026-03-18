@@ -21,6 +21,7 @@ def check_limits(
     daily_loss_limit: float = 0.02,
     weekly_loss_limit: float = 0.05,
     max_consecutive_losses: int = 3,
+    min_account_balance: float = 0,
 ) -> None:
     """
     Check all risk limits before trading. Raises LimitBreached if any is hit.
@@ -31,7 +32,15 @@ def check_limits(
         daily_loss_limit: Max daily loss as fraction of account (e.g. 0.02 = 2%)
         weekly_loss_limit: Max weekly loss as fraction of account (e.g. 0.05 = 5%)
         max_consecutive_losses: Pause after this many SL hits in a row
+        min_account_balance: Minimum balance required to trade (USD, 0 = no limit)
     """
+    # Minimum balance check
+    if min_account_balance > 0 and account_balance < min_account_balance:
+        raise LimitBreached(
+            f"Account balance ${account_balance:,.2f} below minimum "
+            f"${min_account_balance:,.2f}. Not trading until balance is restored."
+        )
+
     today_pnl = logger.get_today_pnl()
     weekly_pnl = logger.get_weekly_pnl()
     consec_losses = logger.get_consecutive_losses()

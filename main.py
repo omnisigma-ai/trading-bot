@@ -6,12 +6,16 @@ Connects to IB TWS (paper or live based on config).
 
 Flow per session:
   1. Connect to IB TWS
-  2. Fetch H1 data + generate Asian range signals
-  3. Place OCA breakout orders (BUY STOP + SELL STOP with bracket SL/TP)
-  4. Start TradeMonitor — subscribes to IB fill/cancel events
-  5. Keep connection alive for max_trade_duration_hours
-  6. Monitor fires Discord alerts + updates SQLite on every fill/expiry
-  7. Send daily summary, disconnect
+  2. Fetch account balance + USD/AUD rate
+  3. Log account snapshot + check risk limits
+  4. Fetch H1 data + generate Asian range signals
+  5. Commission viability check (skip if commission > X% of risk)
+  6. Place OCA breakout orders (BUY STOP + SELL STOP with bracket SL/TP)
+  7. Log signals to DB (traded and skipped)
+  8. Start TradeMonitor — subscribes to IB fill/cancel events
+  9. Keep connection alive for max_trade_duration_hours
+  10. Monitor fires Discord alerts + updates SQLite on every fill/expiry
+  11. Send daily summary, disconnect
 
 Usage:
     python main.py              # start the daily scheduler
@@ -33,8 +37,12 @@ from execution.trade_monitor import TradeMonitor
 from logs.trade_logger import TradeLogger
 from notifications import discord_notifier as discord
 from risk.daily_limits import LimitBreached, check_limits
-from risk.position_sizer import calculate_lot_size
-from strategy.london_breakout import generate_both_signals
+from risk.position_sizer import (
+    calculate_lot_size,
+    estimate_commission,
+    check_commission_viability,
+)
+from strategy.london_breakout import generate_both_signals, PIP_SIZE
 
 
 def run_strategy(config: dict) -> None:
@@ -50,6 +58,8 @@ def run_strategy(config: dict) -> None:
     webhook_url = config["discord"]["webhook_url"]
     db_path = config.get("db_path", "logs/trades.db")
     session_hours = strategy_cfg["max_trade_duration_hours"]
+    limits_cfg = config.get("risk_limits", {})
+    tax_cfg = config.get("tax", {})
 
     print(f"\n[{datetime.now()}] Running strategy | Mode: {mode.upper()}")
 
@@ -63,8 +73,35 @@ def run_strategy(config: dict) -> None:
         account_balance = trader.get_account_balance()
         print(f"[IB] Account balance: ${account_balance:,.2f}")
 
-        # Check daily/weekly loss limits before doing anything
-        limits_cfg = config.get("risk_limits", {})
+        # Fetch USD/JPY for position sizing
+        try:
+            usdjpy = trader.get_current_price("USDJPY")
+            print(f"[IB] USD/JPY rate: {usdjpy:.3f}")
+        except Exception:
+            usdjpy = 150.0
+            print(f"[IB] Could not fetch USD/JPY, using fallback: {usdjpy}")
+
+        # Fetch USD/AUD for ATO tax conversion
+        try:
+            audusd = trader.get_current_price("AUDUSD")
+            usd_aud_rate = round(1.0 / audusd, 4)
+            print(f"[IB] USD/AUD rate: {usd_aud_rate:.4f} (AUD/USD: {audusd:.4f})")
+        except Exception:
+            usd_aud_rate = tax_cfg.get("default_usd_aud_rate", 1.54)
+            print(f"[IB] Could not fetch AUD/USD, using fallback: {usd_aud_rate}")
+
+        # Log account snapshot
+        today_pnl = logger.get_today_pnl()
+        open_count = len(trader.get_open_positions())
+        logger.log_account_snapshot(
+            net_liquidation=account_balance,
+            net_liquidation_aud=round(account_balance * usd_aud_rate, 2),
+            usd_aud_rate=usd_aud_rate,
+            realised_pnl_today=today_pnl,
+            open_positions=open_count,
+        )
+
+        # Check daily/weekly loss limits + minimum balance before doing anything
         try:
             check_limits(
                 logger=logger,
@@ -72,19 +109,22 @@ def run_strategy(config: dict) -> None:
                 daily_loss_limit=limits_cfg.get("daily_loss_limit", 0.02),
                 weekly_loss_limit=limits_cfg.get("weekly_loss_limit", 0.05),
                 max_consecutive_losses=limits_cfg.get("max_consecutive_losses", 3),
+                min_account_balance=limits_cfg.get("min_account_balance", 0),
             )
         except LimitBreached as e:
             print(f"[Risk] Limit breached — skipping session: {e}")
             discord.notify_error(webhook_url, str(e), fatal=False)
+            # Log skipped signals for all pairs
+            now_utc = pd.Timestamp.now("UTC")
+            for pair in pairs:
+                logger.log_signal(
+                    pair=pair,
+                    signal_date=now_utc.strftime("%Y-%m-%d"),
+                    signal_time_utc=now_utc.isoformat(),
+                    traded=False,
+                    skip_reason=f"limit_breached: {e}",
+                )
             return
-
-        # Fetch USD/JPY for accurate position sizing
-        try:
-            usdjpy = trader.get_current_price("USDJPY")
-            print(f"[IB] USD/JPY rate: {usdjpy:.3f}")
-        except Exception:
-            usdjpy = 150.0
-            print(f"[IB] Could not fetch USD/JPY, using fallback: {usdjpy}")
 
         now_utc = pd.Timestamp.now("UTC")
 
@@ -96,6 +136,13 @@ def run_strategy(config: dict) -> None:
                 if pair[:3].upper() in open_symbols:
                     print(f"[Strategy] {pair}: Skipping — open position already exists")
                     discord.notify_error(webhook_url, f"{pair}: Skipped — open position already exists")
+                    logger.log_signal(
+                        pair=pair,
+                        signal_date=now_utc.strftime("%Y-%m-%d"),
+                        signal_time_utc=now_utc.isoformat(),
+                        traded=False,
+                        skip_reason="open_position_exists",
+                    )
                     continue
 
                 df = fetch_historical(pair, period="7d", interval="1h")
@@ -109,6 +156,13 @@ def run_strategy(config: dict) -> None:
                 if not signals:
                     print(f"[Strategy] {pair}: No signal (range too tight)")
                     discord.notify_no_signal(webhook_url, pair, "range too tight")
+                    logger.log_signal(
+                        pair=pair,
+                        signal_date=now_utc.strftime("%Y-%m-%d"),
+                        signal_time_utc=now_utc.isoformat(),
+                        traded=False,
+                        skip_reason="range_too_tight",
+                    )
                     continue
 
                 buy_signal = next(s for s in signals if s.direction == "BUY")
@@ -119,6 +173,35 @@ def run_strategy(config: dict) -> None:
                     sl_pips=buy_signal.sl_pips, quote_per_usd=usdjpy,
                 )
                 risk_usd = account_balance * risk_pct
+
+                # Commission viability check for small accounts
+                est_comm = estimate_commission(
+                    lot_size=lot_size,
+                    commission_per_lot=limits_cfg.get("commission_per_lot", 2.0),
+                )
+                max_comm_pct = limits_cfg.get("max_commission_pct", 0.10)
+                is_viable, comm_pct = check_commission_viability(est_comm, risk_usd, max_comm_pct)
+
+                if not is_viable:
+                    reason = f"commission_too_high: {comm_pct*100:.1f}% of risk (max {max_comm_pct*100:.0f}%)"
+                    print(f"[Risk] {pair}: Skipping — {reason}")
+                    discord.notify_no_signal(webhook_url, pair, reason)
+                    pip = PIP_SIZE.get(pair.upper(), 0.01)
+                    range_size = (buy_signal.range_high - buy_signal.range_low) / pip
+                    logger.log_signal(
+                        pair=pair,
+                        signal_date=now_utc.strftime("%Y-%m-%d"),
+                        signal_time_utc=now_utc.isoformat(),
+                        range_high=buy_signal.range_high,
+                        range_low=buy_signal.range_low,
+                        range_size_pips=round(range_size, 1),
+                        buy_entry=buy_signal.entry, buy_sl=buy_signal.stop_loss, buy_tp=buy_signal.take_profit,
+                        sell_entry=sell_signal.entry, sell_sl=sell_signal.stop_loss, sell_tp=sell_signal.take_profit,
+                        sl_pips=buy_signal.sl_pips, tp_pips=buy_signal.tp_pips,
+                        traded=False,
+                        skip_reason=reason,
+                    )
+                    continue
 
                 # Place OCA bracket orders — returns group with all 6 order IDs
                 group = trader.place_oca_breakout(
@@ -141,6 +224,37 @@ def run_strategy(config: dict) -> None:
                     sl_pips=sell_signal.sl_pips, tp_pips=sell_signal.tp_pips,
                     ib_order_id=group.sell_entry_id,
                 )
+
+                # Log signal as traded
+                pip = PIP_SIZE.get(pair.upper(), 0.01)
+                range_size = (buy_signal.range_high - buy_signal.range_low) / pip
+                logger.log_signal(
+                    pair=pair,
+                    signal_date=now_utc.strftime("%Y-%m-%d"),
+                    signal_time_utc=now_utc.isoformat(),
+                    range_high=buy_signal.range_high,
+                    range_low=buy_signal.range_low,
+                    range_size_pips=round(range_size, 1),
+                    buy_entry=buy_signal.entry, buy_sl=buy_signal.stop_loss, buy_tp=buy_signal.take_profit,
+                    sell_entry=sell_signal.entry, sell_sl=sell_signal.stop_loss, sell_tp=sell_signal.take_profit,
+                    sl_pips=buy_signal.sl_pips, tp_pips=buy_signal.tp_pips,
+                    traded=True,
+                    trade_id=group.buy_db_id,
+                )
+
+                # Log execution events for order placement
+                for label, oid, sig in [
+                    ("BUY", group.buy_entry_id, buy_signal),
+                    ("SELL", group.sell_entry_id, sell_signal),
+                ]:
+                    db_id = group.buy_db_id if label == "BUY" else group.sell_db_id
+                    logger.log_execution_event(
+                        trade_id=db_id, ib_order_id=oid,
+                        event_type="PLACED", event_time=datetime.utcnow().isoformat(),
+                        order_type="ENTRY", price=sig.entry,
+                        quantity=round(lot_size * 100_000),
+                        notes=f"{label} STOP LMT @ {sig.entry}",
+                    )
 
                 # Discord: notify both pending orders
                 for signal in [buy_signal, sell_signal]:
@@ -171,6 +285,7 @@ def run_strategy(config: dict) -> None:
             webhook_url=webhook_url,
             order_groups=order_groups,
             quote_per_usd=usdjpy,
+            usd_aud_rate=usd_aud_rate,
         )
         monitor.start()
 

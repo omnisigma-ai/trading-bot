@@ -96,3 +96,39 @@ def calculate_lot_size(
     lots = max(min_lot, min(lots, max_lot))
 
     return round(lots, 2)
+
+
+def estimate_commission(lot_size: float, commission_per_lot: float = 2.0) -> float:
+    """
+    Estimate round-trip IBKR forex commission in USD.
+
+    Args:
+        lot_size: Position size in standard lots
+        commission_per_lot: USD per lot per side (IBKR ~$2/lot for < $25K trades)
+
+    Returns:
+        Estimated total round-trip commission in USD (entry + exit)
+    """
+    return lot_size * commission_per_lot * 2
+
+
+def check_commission_viability(
+    estimated_commission: float,
+    risk_amount: float,
+    max_commission_pct: float = 0.10,
+) -> tuple[bool, float]:
+    """
+    Check if commission makes the trade unviable for small accounts.
+
+    Args:
+        estimated_commission: Expected round-trip commission in USD
+        risk_amount: Dollar amount at risk (account_balance * risk_pct)
+        max_commission_pct: Skip trade if commission exceeds this fraction of risk
+
+    Returns:
+        (is_viable, commission_as_fraction_of_risk)
+    """
+    if risk_amount <= 0:
+        return False, 1.0
+    commission_pct = estimated_commission / risk_amount
+    return commission_pct <= max_commission_pct, round(commission_pct, 4)
