@@ -8,10 +8,18 @@ Uses Markdown parse mode for formatting.
 import requests
 from datetime import datetime
 
+# Only this chat ID is allowed to receive messages
+AUTHORIZED_CHAT_ID = "7169122227"
+
 
 def _send(bot_token: str, chat_id: str, text: str) -> None:
     if not bot_token or not chat_id:
         print(f"[Telegram] (not configured) {text}")
+        return
+
+    # Only allow sending to the authorized chat ID
+    if str(chat_id) != AUTHORIZED_CHAT_ID:
+        print(f"[Telegram] Blocked — chat_id {chat_id} is not authorized")
         return
 
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
