@@ -80,6 +80,39 @@ class TradeLogger:
         )
         self.conn.commit()
 
+    def get_today_pnl(self) -> float:
+        """Returns total realised P&L in USD for today (UTC)."""
+        today = datetime.utcnow().strftime("%Y-%m-%d")
+        cur = self.conn.execute(
+            "SELECT COALESCE(SUM(pnl_usd), 0) FROM trades WHERE opened_at LIKE ? AND pnl_usd IS NOT NULL",
+            (f"{today}%",),
+        )
+        return float(cur.fetchone()[0])
+
+    def get_weekly_pnl(self) -> float:
+        """Returns total realised P&L in USD for the last 7 days (UTC)."""
+        from datetime import timedelta
+        week_ago = (datetime.utcnow() - timedelta(days=7)).strftime("%Y-%m-%d")
+        cur = self.conn.execute(
+            "SELECT COALESCE(SUM(pnl_usd), 0) FROM trades WHERE opened_at >= ? AND pnl_usd IS NOT NULL",
+            (week_ago,),
+        )
+        return float(cur.fetchone()[0])
+
+    def get_consecutive_losses(self) -> int:
+        """Returns the number of consecutive SL results at the end of trade history."""
+        cur = self.conn.execute(
+            "SELECT result FROM trades WHERE result IS NOT NULL ORDER BY closed_at DESC LIMIT 10"
+        )
+        rows = cur.fetchall()
+        count = 0
+        for (result,) in rows:
+            if result == "SL":
+                count += 1
+            else:
+                break
+        return count
+
     def get_daily_summary(self, date: str = None) -> list[dict]:
         """Fetch all trades for a given date (YYYY-MM-DD). Defaults to today."""
         if date is None:

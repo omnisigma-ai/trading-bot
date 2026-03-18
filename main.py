@@ -32,6 +32,7 @@ from execution.ib_trader import IBTrader
 from execution.trade_monitor import TradeMonitor
 from logs.trade_logger import TradeLogger
 from notifications import discord_notifier as discord
+from risk.daily_limits import LimitBreached, check_limits
 from risk.position_sizer import calculate_lot_size
 from strategy.london_breakout import generate_both_signals
 
@@ -61,6 +62,21 @@ def run_strategy(config: dict) -> None:
         trader.connect()
         account_balance = trader.get_account_balance()
         print(f"[IB] Account balance: ${account_balance:,.2f}")
+
+        # Check daily/weekly loss limits before doing anything
+        limits_cfg = config.get("risk_limits", {})
+        try:
+            check_limits(
+                logger=logger,
+                account_balance=account_balance,
+                daily_loss_limit=limits_cfg.get("daily_loss_limit", 0.02),
+                weekly_loss_limit=limits_cfg.get("weekly_loss_limit", 0.05),
+                max_consecutive_losses=limits_cfg.get("max_consecutive_losses", 3),
+            )
+        except LimitBreached as e:
+            print(f"[Risk] Limit breached — skipping session: {e}")
+            discord.notify_error(webhook_url, str(e), fatal=False)
+            return
 
         # Fetch USD/JPY for accurate position sizing
         try:

@@ -4,7 +4,12 @@ pairs:
   - GBPJPY
   - AUDJPY
 
-risk_per_trade: 0.01  # 1% of account balance
+risk_per_trade: 0.01  # 1% of account balance per trade
+
+risk_limits:
+  daily_loss_limit: 0.02        # stop trading if down 2% today
+  weekly_loss_limit: 0.05       # stop trading if down 5% this week
+  max_consecutive_losses: 3     # pause after 3 SL hits in a row
 
 strategy:
   asian_range_hours: 6      # hours of candles to define the Asian range
