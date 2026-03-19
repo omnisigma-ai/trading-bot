@@ -81,6 +81,7 @@ class TradeMonitor:
         # Live P&L tracking for open positions
         self._open_positions: dict[int, dict] = {}  # entry_id → {pair, side, entry_price, lot_size, last_pnl_pips}
         self._pnl_alert_threshold = 5.0  # alert every 5 pips of movement
+        self._subscribed_pairs: set[str] = set()
 
     def start(self) -> None:
         """Register IB event callbacks."""
@@ -289,13 +290,27 @@ class TradeMonitor:
     # ── helpers ───────────────────────────────────────────────────────────────
 
     def _subscribe_price(self, pair: str) -> None:
-        """Subscribe to real-time price updates for a pair."""
+        """Subscribe to real-time price updates for a pair (async-safe)."""
+        if pair in self._subscribed_pairs:
+            return
         from ib_insync import Forex
         symbol = pair[:3].upper()
         currency = pair[3:].upper()
         contract = Forex(pair=f"{symbol}{currency}")
-        self.ib.qualifyContracts(contract)
-        self.ib.reqMktData(contract)
+        # Use async version to avoid 'event loop already running' error
+        import asyncio
+        loop = asyncio.get_event_loop()
+        loop.create_task(self._async_subscribe(contract, pair))
+
+    async def _async_subscribe(self, contract, pair: str) -> None:
+        """Async helper to subscribe to market data."""
+        try:
+            await self.ib.qualifyContractsAsync(contract)
+            self.ib.reqMktData(contract)
+            self._subscribed_pairs.add(pair)
+            print(f"[Monitor] Subscribed to {pair} price updates")
+        except Exception as e:
+            print(f"[Monitor] Failed to subscribe to {pair}: {e}")
 
     def _on_ticker_update(self, tickers: set[Ticker]) -> None:
         """Fired on price updates — check P&L for open positions."""
