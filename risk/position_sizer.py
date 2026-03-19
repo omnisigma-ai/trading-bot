@@ -71,7 +71,7 @@ def calculate_lot_size(
     sl_pips: float,
     quote_per_usd: float = 150.0,
     min_lot: float = 0.01,
-    max_lot: float = 10.0,
+    max_lot: float = 0.5,
     lot_step: float = 0.01,
 ) -> float:
     """
