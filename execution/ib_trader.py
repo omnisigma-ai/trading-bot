@@ -55,10 +55,22 @@ class IBTrader:
         print("[IB] Disconnected from TWS")
 
     def get_account_balance(self) -> float:
-        """Returns the net liquidation value in USD."""
+        """Returns the net liquidation value in the account's base currency.
+
+        Tries USD first (standard), then falls back to BASE or any currency
+        reported by IB (handles AUD-denominated paper accounts).
+        """
+        fallback = None
         for av in self.ib.accountValues():
-            if av.tag == "NetLiquidation" and av.currency == "USD":
-                return float(av.value)
+            if av.tag == "NetLiquidation":
+                if av.currency == "USD":
+                    return float(av.value)
+                if av.currency == "BASE":
+                    fallback = float(av.value)
+                elif fallback is None and av.currency not in ("", "BASE"):
+                    fallback = float(av.value)
+        if fallback is not None:
+            return fallback
         raise RuntimeError("Could not retrieve account balance from IB.")
 
     def get_current_price(self, pair: str) -> float:
