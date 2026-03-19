@@ -294,8 +294,41 @@ def run_strategy(config: dict) -> None:
         )
         monitor.start()
 
-        print(f"\n[Bot] Monitoring session for {session_hours} hours...")
-        trader.ib.sleep(session_hours * 3600)   # runs IB event loop while waiting
+        # ── Monitoring loop: periodic position updates every 15 minutes ──────
+        update_interval = 15 * 60  # 15 minutes
+        total_seconds = session_hours * 3600
+        elapsed = 0
+
+        print(f"\n[Bot] Monitoring session for {session_hours} hours (updates every 15 min)...")
+        while elapsed < total_seconds:
+            wait = min(update_interval, total_seconds - elapsed)
+            trader.ib.sleep(wait)
+            elapsed += wait
+
+            # Send position/P&L update via Telegram
+            try:
+                positions = []
+                for pos in trader.get_open_positions():
+                    sym = pos["symbol"]
+                    cur_price = trader.get_current_price(f"{sym}USD") if not sym.endswith("USD") else 0
+                    positions.append({
+                        "pair": sym, "side": "LONG" if pos["position"] > 0 else "SHORT",
+                        "entry": pos["avg_cost"], "current": cur_price,
+                        "pnl": 0,  # IB doesn't give unrealised P&L per position easily
+                    })
+                # Get account balance for the update
+                bal = trader.get_account_balance()
+                unrealised = 0.0
+                for av in trader.ib.accountValues():
+                    if av.tag == "UnrealizedPnL" and av.currency in ("USD", "AUD", "BASE"):
+                        try:
+                            unrealised = float(av.value)
+                        except ValueError:
+                            pass
+                        break
+                notify.notify_position_update(bot_token, chat_id, positions, unrealised, bal)
+            except Exception as e:
+                print(f"[Monitor] Position update failed: {e}")
 
         monitor.stop()
 
@@ -303,8 +336,25 @@ def run_strategy(config: dict) -> None:
         print(f"[FATAL] Strategy run failed: {e}")
         notify.notify_error(bot_token, chat_id, f"FATAL: `{e}`", fatal=True)
     finally:
+        notify.notify_bot_shutdown(bot_token, chat_id, "Session ended")
         trader.disconnect()
         logger.close()
+
+
+def _send_startup_alert(config: dict) -> None:
+    """Send Telegram alert when bot starts/restarts."""
+    tg = config.get("telegram", {})
+    bot_token = tg.get("bot_token", "")
+    chat_id = str(tg.get("chat_id", ""))
+    pairs = ", ".join(config["pairs"])
+    mode = config["mode"].upper()
+    schedule_cfg = config.get("schedule", {})
+    times = ", ".join(schedule_cfg.get("run_times", [schedule_cfg.get("time", "17:00")]))
+    notify.notify_error(
+        bot_token, chat_id,
+        f"Bot started — {mode} mode | {pairs} | Schedule: {times} {schedule_cfg.get('timezone', '')}",
+        fatal=False,
+    )
 
 
 def main():
@@ -318,21 +368,28 @@ def main():
 
     if args.once:
         print("[Bot] Running strategy once (--once flag)...")
+        _send_startup_alert(config)
         run_strategy(config)
         return
 
-    hour, minute = map(int, schedule_cfg["time"].split(":"))
     timezone = schedule_cfg["timezone"]
 
-    scheduler = BlockingScheduler(timezone=pytz.timezone(timezone))
-    scheduler.add_job(
-        run_strategy,
-        trigger=CronTrigger(hour=hour, minute=minute, timezone=timezone),
-        args=[config],
-        name="london_breakout",
-    )
+    # Support multiple run times per day (e.g. for different sessions)
+    run_times = schedule_cfg.get("run_times", [schedule_cfg["time"]])
 
-    print(f"[Bot] Scheduler started — running daily at {schedule_cfg['time']} {timezone}")
+    scheduler = BlockingScheduler(timezone=pytz.timezone(timezone))
+    for time_str in run_times:
+        hour, minute = map(int, time_str.split(":"))
+        scheduler.add_job(
+            run_strategy,
+            trigger=CronTrigger(hour=hour, minute=minute, timezone=timezone),
+            args=[config],
+            name=f"breakout_{time_str}",
+        )
+
+    _send_startup_alert(config)
+
+    print(f"[Bot] Scheduler started — running at {run_times} {timezone}")
     print(f"[Bot] Mode: {config['mode'].upper()} | Pairs: {', '.join(config['pairs'])}")
     print("[Bot] Press Ctrl+C to stop.\n")
 

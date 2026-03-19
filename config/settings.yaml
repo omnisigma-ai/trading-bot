@@ -1,8 +1,7 @@
 mode: paper          # paper | live
 
 pairs:
-  - EURUSD
-  - GBPUSD
+  - AUDUSD
 
 risk_per_trade: 0.01  # 1% of account balance per trade
 
@@ -21,7 +20,14 @@ strategy:
   max_trade_duration_hours: 6  # time-based exit if still open
 
 schedule:
-  time: "17:00"             # 5pm Sydney time
+  # AUDUSD peak sessions (Sydney time):
+  #   08:00 = Sydney open (Asian session start)
+  #   17:00 = London pre-open (original strategy time)
+  #   23:00 = NY session overlap
+  run_times:
+    - "08:00"     # Sydney/Tokyo session
+    - "17:00"     # London breakout (pre-open)
+    - "23:00"     # NY overlap session
   timezone: "Australia/Sydney"
 
 ib:

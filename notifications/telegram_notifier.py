@@ -119,3 +119,29 @@ def notify_daily_summary(bot_token: str, chat_id: str,
     lines.append(f"\n*Net P&L: {sign}${total_pnl:.2f}*")
 
     _send(bot_token, chat_id, "\n".join(lines))
+
+
+def notify_position_update(bot_token: str, chat_id: str,
+                           positions: list[dict], unrealised_pnl: float,
+                           account_balance: float) -> None:
+    lines = ["\U0001f4c8 *POSITION UPDATE*"]
+    if not positions:
+        lines.append("  No open positions — waiting for breakout")
+    else:
+        for p in positions:
+            pair = p.get("pair", "?")
+            side = p.get("side", "?")
+            entry = p.get("entry", 0)
+            current = p.get("current", 0)
+            pnl = p.get("pnl", 0)
+            sign = "+" if pnl >= 0 else ""
+            lines.append(f"  {pair} `{side}` @ `{entry}` | now `{current}` | {sign}${pnl:.2f}")
+    lines.append(f"\nBalance: `${account_balance:,.2f}` | Unrealised: `${unrealised_pnl:,.2f}`")
+    _send(bot_token, chat_id, "\n".join(lines))
+
+
+def notify_bot_shutdown(bot_token: str, chat_id: str, reason: str = "") -> None:
+    msg = "\U0001f6d1 *BOT STOPPED*"
+    if reason:
+        msg += f" — {reason}"
+    _send(bot_token, chat_id, msg)
