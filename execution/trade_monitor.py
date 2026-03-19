@@ -276,8 +276,10 @@ class TradeMonitor:
         self, side: str, entry_price: float, exit_price: float, pair: str, lot_size: float
     ) -> tuple[float, float]:
         """Calculate pips and USD P&L from actual fill prices."""
-        pip = PIP_SIZE.get(pair.upper(), 0.01)
-        pv = pip_value_per_lot(pair, self.quote_per_usd)
+        pip = PIP_SIZE.get(pair.upper(), 0.0001)
+        # USD-quoted pairs have pip value directly in USD
+        quote_rate = 1.0 if pair.upper().endswith("USD") else self.quote_per_usd
+        pv = pip_value_per_lot(pair, quote_rate)
 
         if side == "BUY":
             pips = (exit_price - entry_price) / pip

@@ -24,10 +24,18 @@ For JPY pairs: pip_value_per_lot = 1,000 JPY (1 pip × 100,000 units × 0.01)
 # Contract size for a standard lot
 CONTRACT_SIZE = 100_000
 
-# Pip sizes
+# Pip sizes (0.01 for JPY pairs, 0.0001 for USD pairs)
 PIP_SIZE = {
     "GBPJPY": 0.01,
     "AUDJPY": 0.01,
+    "EURUSD": 0.0001,
+    "GBPUSD": 0.0001,
+    "AUDUSD": 0.0001,
+    "NZDUSD": 0.0001,
+    "USDJPY": 0.01,
+    "USDCAD": 0.0001,
+    "USDCHF": 0.0001,
+    "EURJPY": 0.01,
 }
 
 

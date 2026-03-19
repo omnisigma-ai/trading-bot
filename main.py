@@ -170,9 +170,11 @@ def run_strategy(config: dict) -> None:
                 buy_signal = next(s for s in signals if s.direction == "BUY")
                 sell_signal = next(s for s in signals if s.direction == "SELL")
 
+                # USD-quoted pairs have pip value directly in USD (quote_per_usd=1)
+                quote_rate = 1.0 if pair.upper().endswith("USD") else usdjpy
                 lot_size = calculate_lot_size(
                     pair=pair, account_balance=account_balance, risk_pct=risk_pct,
-                    sl_pips=buy_signal.sl_pips, quote_per_usd=usdjpy,
+                    sl_pips=buy_signal.sl_pips, quote_per_usd=quote_rate,
                 )
                 risk_usd = account_balance * risk_pct
 

@@ -1,8 +1,8 @@
 mode: paper          # paper | live
 
 pairs:
-  - GBPJPY
-  - AUDJPY
+  - EURUSD
+  - GBPUSD
 
 risk_per_trade: 0.01  # 1% of account balance per trade
 

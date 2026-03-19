@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 
 from ib_insync import IB, Forex, Order, util
 
-from strategy.london_breakout import Signal
+from strategy.london_breakout import PIP_SIZE, Signal
 
 
 @dataclass
@@ -116,10 +116,12 @@ class IBTrader:
         )
 
         # --- BUY STOP LMT (entry) ---
+        pip = PIP_SIZE.get(buy_signal.pair.upper(), 0.0001)
+        slippage_guard = 5 * pip  # 5 pips of slippage allowance
         buy_entry = self._make_stop_limit_order(
             action="BUY", units=units,
             stop_price=buy_signal.entry,
-            limit_price=buy_signal.entry + (5 * 0.01),
+            limit_price=buy_signal.entry + slippage_guard,
             gtd=gtd, oca_group=oca_group, transmit=False,
         )
         buy_entry_trade = self.ib.placeOrder(contract, buy_entry)
@@ -146,7 +148,7 @@ class IBTrader:
         sell_entry = self._make_stop_limit_order(
             action="SELL", units=units,
             stop_price=sell_signal.entry,
-            limit_price=sell_signal.entry - (5 * 0.01),
+            limit_price=sell_signal.entry - slippage_guard,
             gtd=gtd, oca_group=oca_group, transmit=False,
         )
         sell_entry_trade = self.ib.placeOrder(contract, sell_entry)

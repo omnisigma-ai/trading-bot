@@ -16,11 +16,22 @@ from typing import Optional
 import pandas as pd
 import pytz
 
-# Pip sizes per pair (1 pip = 0.01 for JPY pairs)
+# Pip sizes per pair (0.01 for JPY pairs, 0.0001 for USD pairs)
 PIP_SIZE = {
     "GBPJPY": 0.01,
     "AUDJPY": 0.01,
+    "EURUSD": 0.0001,
+    "GBPUSD": 0.0001,
+    "AUDUSD": 0.0001,
+    "NZDUSD": 0.0001,
+    "USDJPY": 0.01,
+    "USDCAD": 0.0001,
+    "USDCHF": 0.0001,
+    "EURJPY": 0.01,
 }
+
+# Price rounding decimals (3 for JPY pairs, 5 for USD pairs)
+PRICE_DECIMALS = {pair: (3 if pip >= 0.01 else 5) for pair, pip in PIP_SIZE.items()}
 
 
 @dataclass
@@ -108,14 +119,15 @@ def generate_signal(
     buy_sl_pips = (buy_entry - buy_sl) / pip
     buy_tp = buy_entry + (buy_sl_pips * tp_multiplier * pip)
 
+    dec = PRICE_DECIMALS.get(pair.upper(), 5)
     return Signal(
         pair=pair,
         direction="BUY",
-        entry=round(buy_entry, 3),
-        stop_loss=round(buy_sl, 3),
-        take_profit=round(buy_tp, 3),
-        range_high=round(range_high, 3),
-        range_low=round(range_low, 3),
+        entry=round(buy_entry, dec),
+        stop_loss=round(buy_sl, dec),
+        take_profit=round(buy_tp, dec),
+        range_high=round(range_high, dec),
+        range_low=round(range_low, dec),
         sl_pips=round(buy_sl_pips, 1),
         tp_pips=round(buy_sl_pips * tp_multiplier, 1),
     )
@@ -158,17 +170,18 @@ def generate_both_signals(
     sell_sl_pips = (sell_sl - sell_entry) / pip
     sell_tp = sell_entry - (sell_sl_pips * tp_multiplier * pip)
 
+    dec = PRICE_DECIMALS.get(pair.upper(), 5)
     return [
         Signal(
             pair=pair, direction="BUY",
-            entry=round(buy_entry, 3), stop_loss=round(buy_sl, 3), take_profit=round(buy_tp, 3),
-            range_high=round(range_high, 3), range_low=round(range_low, 3),
+            entry=round(buy_entry, dec), stop_loss=round(buy_sl, dec), take_profit=round(buy_tp, dec),
+            range_high=round(range_high, dec), range_low=round(range_low, dec),
             sl_pips=round(buy_sl_pips, 1), tp_pips=round(buy_sl_pips * tp_multiplier, 1),
         ),
         Signal(
             pair=pair, direction="SELL",
-            entry=round(sell_entry, 3), stop_loss=round(sell_sl, 3), take_profit=round(sell_tp, 3),
-            range_high=round(range_high, 3), range_low=round(range_low, 3),
+            entry=round(sell_entry, dec), stop_loss=round(sell_sl, dec), take_profit=round(sell_tp, dec),
+            range_high=round(range_high, dec), range_low=round(range_low, dec),
             sl_pips=round(sell_sl_pips, 1), tp_pips=round(sell_sl_pips * tp_multiplier, 1),
         ),
     ]
