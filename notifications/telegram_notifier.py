@@ -145,3 +145,198 @@ def notify_bot_shutdown(bot_token: str, chat_id: str, reason: str = "") -> None:
     if reason:
         msg += f" — {reason}"
     _send(bot_token, chat_id, msg)
+
+
+def notify_stock_order(bot_token: str, chat_id: str, symbol: str,
+                       direction: str, shares: int, entry: float,
+                       sl: float, tp: float, risk_usd: float,
+                       strategy: str = "momentum_stocks") -> None:
+    arrow = "\U0001f7e2" if direction == "BUY" else "\U0001f534"
+    msg = (
+        f"{arrow} *STOCK ORDER* — {symbol} [{strategy}]\n"
+        f"Direction: `{direction}` | Shares: `{shares}`\n"
+        f"Entry:  `${entry:.2f}`\n"
+        f"SL:     `${sl:.2f}` | TP: `${tp:.2f}`\n"
+        f"Risk:   `${risk_usd:.2f}`"
+    )
+    _send(bot_token, chat_id, msg)
+
+
+def notify_score_report(bot_token: str, chat_id: str,
+                        scores: list) -> None:
+    """Send opportunity scoring summary."""
+    if not scores:
+        return
+    lines = ["\U0001f3af *OPPORTUNITY SCORES*"]
+    for s in scores:
+        icon = "\u2705" if s.accepted else "\u274c"
+        lines.append(
+            f"  {icon} {s.symbol} {s.direction} | "
+            f"R:R `{s.risk_reward_ratio:.1f}` | "
+            f"Win `{s.win_probability*100:.0f}%` | "
+            f"EV `{s.expected_value:+.2f}` | "
+            f"Score `{s.asymmetry_score:.2f}`"
+        )
+    _send(bot_token, chat_id, "\n".join(lines))
+
+
+def notify_portfolio_summary(bot_token: str, chat_id: str,
+                             trading_balance: float,
+                             etf_value: float,
+                             pending_realloc: float,
+                             etf_holdings: list[dict] = None) -> None:
+    """Weekly wealth summary."""
+    total = trading_balance + etf_value
+    lines = ["\U0001f4b0 *PORTFOLIO SUMMARY*"]
+    lines.append(f"  Trading balance: `${trading_balance:,.2f}`")
+    lines.append(f"  ETF portfolio:   `${etf_value:,.2f}`")
+    lines.append(f"  *Total wealth:   ${total:,.2f}*")
+    if pending_realloc > 0:
+        lines.append(f"  Pending realloc: `${pending_realloc:.2f}`")
+    if etf_holdings:
+        lines.append("\n  *ETF Holdings:*")
+        for h in etf_holdings:
+            lines.append(
+                f"    {h['symbol']}: {h['total_shares']:.0f} shares "
+                f"(${h['total_invested_usd']:,.2f})"
+            )
+    _send(bot_token, chat_id, "\n".join(lines))
+
+
+def notify_exit_action(bot_token: str, chat_id: str,
+                       symbol: str, action: str, details: str) -> None:
+    """Notify about exit strategy actions (trailing stop moves, partial exits)."""
+    icons = {
+        "modify_stop": "\U0001f504",     # arrows
+        "partial_close": "\u2702\ufe0f", # scissors
+        "breakeven": "\U0001f6e1\ufe0f", # shield
+    }
+    icon = icons.get(action, "\u2699\ufe0f")
+    msg = f"{icon} *EXIT ACTION* — {symbol}\n{details}"
+    _send(bot_token, chat_id, msg)
+
+
+def notify_value_stock_selection(bot_token: str, chat_id: str,
+                                 selected, runners_up: list,
+                                 shares: int, price_aud: float,
+                                 cost_aud: float) -> None:
+    """Notify about EV-scored value stock purchase with selection rationale."""
+    s = selected
+    lines = [
+        f"\U0001f4a1 *VALUE STOCK PURCHASED* \u2014 {shares} x {s.symbol} @ A${price_aud:.2f}",
+        f"Cost: `A${cost_aud:.2f}` | Moat: `{s.moat_rating}`",
+        "",
+        f"*EV Score: {s.composite_score:.1f}/100*",
+        f"  Valuation: `{s.valuation_score:.0f}` | Quality: `{s.quality_score:.0f}` | Safety: `{s.safety_score:.0f}`",
+    ]
+
+    metrics = []
+    if s.ev_to_ebitda is not None:
+        metrics.append(f"EV/EBITDA `{s.ev_to_ebitda:.1f}`")
+    if s.trailing_pe is not None:
+        metrics.append(f"P/E `{s.trailing_pe:.1f}`")
+    if s.roe is not None:
+        metrics.append(f"ROE `{s.roe * 100:.1f}%`")
+    if s.debt_to_equity is not None:
+        metrics.append(f"D/E `{s.debt_to_equity:.0f}`")
+    if s.dividend_yield is not None:
+        metrics.append(f"Div `{s.dividend_yield * 100:.1f}%`")
+    if metrics:
+        lines.append("  " + " | ".join(metrics))
+
+    if runners_up:
+        lines.append("")
+        lines.append("*Runners-up:*")
+        for r in runners_up[:3]:
+            lines.append(
+                f"  #{r.rank} {r.symbol} \u2014 Score `{r.composite_score:.1f}` "
+                f"({r.moat_rating})"
+            )
+
+    _send(bot_token, chat_id, "\n".join(lines))
+
+
+def notify_dip_detected(bot_token: str, chat_id: str,
+                        signal, deploying: bool,
+                        pending_aud: float = 0) -> None:
+    """Notify about macro dip detection and deployment decision."""
+    if signal.is_dip:
+        icon = "\U0001f4c9"  # chart down
+        status = "DEPLOYING" if deploying else "DIP DETECTED (insufficient funds)"
+    else:
+        if deploying:
+            icon = "\u23f0"  # alarm clock
+            status = "MAX WAIT REACHED \u2014 deploying"
+        else:
+            icon = "\U0001f4ca"  # chart
+            status = "NO DIP \u2014 holding"
+
+    lines = [f"{icon} *MACRO CHECK* \u2014 {status}"]
+
+    if signal.triggers:
+        lines.append("*Triggers:*")
+        for t in signal.triggers:
+            lines.append(f"  \u26a0\ufe0f {t}")
+
+    snap = signal.macro_snapshot
+    lines.append("")
+    readings = []
+    if snap.get("vix") is not None:
+        readings.append(f"VIX `{snap['vix']:.1f}`")
+    if snap.get("gold") is not None:
+        readings.append(f"Gold `${snap['gold']:,.0f}`")
+    if snap.get("oil_wti") is not None:
+        readings.append(f"Oil `${snap['oil_wti']:.1f}`")
+    if snap.get("aud_usd") is not None:
+        readings.append(f"AUD `{snap['aud_usd']:.4f}`")
+    if readings:
+        lines.append(" | ".join(readings))
+
+    lines.append(f"Confidence: `{signal.confidence:.0%}` | Pending: `A${pending_aud:,.2f}`")
+
+    _send(bot_token, chat_id, "\n".join(lines))
+
+
+def notify_feature_health(bot_token: str, chat_id: str,
+                          scores: list, diagnostics: list) -> None:
+    """Weekly feature health report with value scores and diagnostics."""
+    if not scores:
+        return
+
+    week_str = datetime.utcnow().strftime("%Y-%m-%d")
+    lines = [f"\U0001f4ca *FEATURE HEALTH REPORT* \u2014 {week_str}"]
+
+    for s in scores:
+        if s.score is None:
+            icon = "\u2754"  # question mark
+            score_str = "pending"
+        elif s.score >= 70:
+            icon = "\u2705"  # green check
+            score_str = f"{s.score:.0f}%"
+        elif s.score >= 50:
+            icon = "\U0001f7e1"  # yellow circle
+            score_str = f"{s.score:.0f}%"
+        else:
+            icon = "\u26a0\ufe0f"  # warning
+            score_str = f"{s.score:.0f}%"
+
+        lines.append(
+            f"  {icon} `{s.feature}`: {score_str} "
+            f"({s.correct}/{s.evaluated} correct)"
+        )
+
+    if diagnostics:
+        lines.append("")
+        lines.append("*Underperformers:*")
+        for d in diagnostics:
+            lines.append(f"  \u26a0\ufe0f *{d.feature}* ({d.value_score:.0f}%)")
+            if d.failure_clusters:
+                top = d.failure_clusters[0]
+                lines.append(
+                    f"    Top failure: `{top['rule']}` "
+                    f"({top['count']}x, {top['pct']:.0f}%)"
+                )
+            for fix in d.suggested_fixes[:2]:
+                lines.append(f"    \U0001f527 {fix}")
+
+    _send(bot_token, chat_id, "\n".join(lines))
