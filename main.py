@@ -375,7 +375,7 @@ def main():
     timezone = schedule_cfg["timezone"]
 
     # Support multiple run times per day (e.g. for different sessions)
-    run_times = schedule_cfg.get("run_times", [schedule_cfg["time"]])
+    run_times = schedule_cfg.get("run_times", [schedule_cfg.get("time", "17:00")])
 
     scheduler = BlockingScheduler(timezone=pytz.timezone(timezone))
     for time_str in run_times:
