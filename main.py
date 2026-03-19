@@ -147,7 +147,7 @@ def run_strategy(config: dict) -> None:
                     )
                     continue
 
-                df = fetch_historical(pair, period="7d", interval="1h")
+                df = fetch_historical(pair, period="7d", interval="1h", ib=trader.ib)
                 signals = generate_both_signals(
                     pair=pair, df=df, as_of=now_utc,
                     asian_range_hours=strategy_cfg["asian_range_hours"],

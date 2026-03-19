@@ -1,15 +1,19 @@
 """
-Fetches historical OHLCV data for backtesting via yfinance.
-Forex pairs use the Yahoo Finance format: GBPJPY=X, AUDJPY=X
+Fetches historical OHLCV data for the trading bot.
 
-CSV fallback: place a file at data/GBPJPY_1h.csv (or AUDJPY_1h.csv) with
-columns: Datetime, Open, High, Low, Close, Volume
-This is useful if Yahoo Finance is unavailable or you have your own data.
+Data source priority (for live/paper trading):
+  1. IB historical data via ib_insync (if an IB connection is passed)
+  2. yfinance (Yahoo Finance)
+  3. Local CSV fallback
+
+For backtesting, use fetch_historical() without an IB connection.
 """
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
 import yfinance as yf
+from ib_insync import IB, Forex
 
 # Yahoo Finance ticker suffixes for forex pairs
 YAHOO_TICKERS = {
@@ -17,7 +21,73 @@ YAHOO_TICKERS = {
     "AUDJPY": "AUDJPY=X",
 }
 
+# IB duration string mapping for common periods
+_IB_DURATIONS = {
+    "7d": "1 W",
+    "14d": "2 W",
+    "1mo": "1 M",
+    "3mo": "3 M",
+    "6mo": "6 M",
+    "1y": "1 Y",
+    "3y": "3 Y",
+}
+
+# IB bar size mapping
+_IB_BAR_SIZES = {
+    "1h": "1 hour",
+    "1d": "1 day",
+    "4h": "4 hours",
+    "15m": "15 mins",
+    "5m": "5 mins",
+}
+
 CSV_DIR = Path(__file__).parent
+
+
+def fetch_from_ib(ib: IB, pair: str, period: str = "7d", interval: str = "1h") -> pd.DataFrame:
+    """
+    Fetch OHLCV data from IB TWS/Gateway.
+
+    Args:
+        ib: Connected ib_insync.IB instance
+        pair: Pair name e.g. 'GBPJPY'
+        period: Lookback period e.g. '7d', '1mo'
+        interval: Candle interval e.g. '1h', '1d'
+
+    Returns:
+        DataFrame with columns: Open, High, Low, Close, Volume
+        Index: DatetimeIndex (UTC)
+    """
+    symbol = pair[:3].upper()
+    currency = pair[3:].upper()
+    contract = Forex(pair=f"{symbol}{currency}")
+    ib.qualifyContracts(contract)
+
+    duration = _IB_DURATIONS.get(period, "1 W")
+    bar_size = _IB_BAR_SIZES.get(interval, "1 hour")
+
+    bars = ib.reqHistoricalData(
+        contract,
+        endDateTime="",
+        durationStr=duration,
+        barSizeSetting=bar_size,
+        whatToShow="MIDPOINT",
+        useRTH=False,
+        formatDate=2,  # UTC
+    )
+
+    if not bars:
+        raise RuntimeError(f"No IB historical data returned for {pair}")
+
+    df = pd.DataFrame(
+        [{"Datetime": b.date, "Open": b.open, "High": b.high,
+          "Low": b.low, "Close": b.close, "Volume": b.volume} for b in bars]
+    )
+    df["Datetime"] = pd.to_datetime(df["Datetime"], utc=True)
+    df.set_index("Datetime", inplace=True)
+    df.dropna(inplace=True)
+    print(f"[Data] Fetched {len(df)} bars from IB for {pair} ({period}, {interval})")
+    return df
 
 
 def fetch_from_csv(pair: str, interval: str = "1h") -> pd.DataFrame:
@@ -38,19 +108,29 @@ def fetch_from_csv(pair: str, interval: str = "1h") -> pd.DataFrame:
     return df
 
 
-def fetch_historical(pair: str, period: str = "3y", interval: str = "1h") -> pd.DataFrame:
+def fetch_historical(pair: str, period: str = "3y", interval: str = "1h",
+                     ib: IB | None = None) -> pd.DataFrame:
     """
-    Fetch OHLCV data from Yahoo Finance.
+    Fetch OHLCV data. Uses IB if a connection is provided, else yfinance.
 
     Args:
         pair: Pair name e.g. 'GBPJPY'
-        period: Lookback period e.g. '3y', '1y', '6mo'
+        period: Lookback period e.g. '7d', '3y'
         interval: Candle interval e.g. '1h', '1d'
+        ib: Optional connected IB instance (used in live/paper mode)
 
     Returns:
         DataFrame with columns: Open, High, Low, Close, Volume
         Index: DatetimeIndex (UTC)
     """
+    # Try IB first if connection is available
+    if ib is not None and ib.isConnected():
+        try:
+            return fetch_from_ib(ib, pair, period, interval)
+        except Exception as e:
+            print(f"[Data] IB historical data failed for {pair}: {e} — falling back to yfinance")
+
+    # Fall back to yfinance
     ticker = YAHOO_TICKERS.get(pair.upper())
     if not ticker:
         raise ValueError(f"Unsupported pair: {pair}. Supported: {list(YAHOO_TICKERS.keys())}")
