@@ -19,7 +19,7 @@ placement via ib.sleep(), which runs the event loop while waiting.
 """
 from datetime import datetime, timedelta
 
-from ib_insync import IB, Fill, Trade
+from ib_insync import IB, Fill, Trade, Ticker
 
 from execution.ib_trader import BreakoutOrderGroup
 from logs.trade_logger import TradeLogger
@@ -78,16 +78,22 @@ class TradeMonitor:
 
         self._daily_results: list[dict] = []
 
+        # Live P&L tracking for open positions
+        self._open_positions: dict[int, dict] = {}  # entry_id → {pair, side, entry_price, lot_size, last_pnl_pips}
+        self._pnl_alert_threshold = 5.0  # alert every 5 pips of movement
+
     def start(self) -> None:
         """Register IB event callbacks."""
         self.ib.execDetailsEvent += self._on_exec_details
         self.ib.orderStatusEvent += self._on_order_status
+        self.ib.pendingTickersEvent += self._on_ticker_update
         print("[Monitor] Trade monitor started — watching for fills...")
 
     def stop(self) -> None:
         """Unregister callbacks and send daily summary."""
         self.ib.execDetailsEvent -= self._on_exec_details
         self.ib.orderStatusEvent -= self._on_order_status
+        self.ib.pendingTickersEvent -= self._on_ticker_update
 
         # Any entries still not resolved by now = no trigger (GTD expired)
         for entry_id, group in self._entry_ids.items():
@@ -162,6 +168,14 @@ class TradeMonitor:
             notify.notify_order_filled(self.bot_token, self.chat_id, group.pair, side, fill_price)
             print(f"[Monitor] Entry filled: {group.pair} {side} @ {fill_price} (slippage: {slippage_pips:+.1f} pips)")
 
+            # Start live P&L tracking for this position
+            self._open_positions[order_id] = {
+                "pair": group.pair, "side": side,
+                "entry_price": fill_price, "lot_size": group.lot_size,
+                "last_alert_pips": 0.0,
+            }
+            self._subscribe_price(group.pair)
+
         # TP filled → trade won
         elif order_id in self._tp_to_entry:
             entry_id = self._tp_to_entry[order_id]
@@ -191,6 +205,7 @@ class TradeMonitor:
 
             notify.notify_tp_hit(self.bot_token, self.chat_id, group.pair, side, pips, pnl)
             self._resolved_entries.add(entry_id)
+            self._open_positions.pop(entry_id, None)
             self._daily_results.append({"pair": group.pair, "result": "TP", "pips": pips, "pnl_usd": pnl})
             print(f"[Monitor] TP hit: {group.pair} {side} @ {fill_price} | +{pips:.1f} pips | +${pnl:.2f} (A${pnl_aud:.2f})")
 
@@ -223,6 +238,7 @@ class TradeMonitor:
 
             notify.notify_sl_hit(self.bot_token, self.chat_id, group.pair, side, abs(pips), pnl)
             self._resolved_entries.add(entry_id)
+            self._open_positions.pop(entry_id, None)
             self._daily_results.append({"pair": group.pair, "result": "SL", "pips": abs(pips), "pnl_usd": pnl})
             print(f"[Monitor] SL hit: {group.pair} {side} @ {fill_price} | {pips:.1f} pips | ${pnl:.2f} (A${pnl_aud:.2f})")
 
@@ -271,6 +287,54 @@ class TradeMonitor:
             print(f"[Monitor] No trigger: {group.pair} {side} order expired")
 
     # ── helpers ───────────────────────────────────────────────────────────────
+
+    def _subscribe_price(self, pair: str) -> None:
+        """Subscribe to real-time price updates for a pair."""
+        from ib_insync import Forex
+        symbol = pair[:3].upper()
+        currency = pair[3:].upper()
+        contract = Forex(pair=f"{symbol}{currency}")
+        self.ib.qualifyContracts(contract)
+        self.ib.reqMktData(contract)
+
+    def _on_ticker_update(self, tickers: set[Ticker]) -> None:
+        """Fired on price updates — check P&L for open positions."""
+        if not self._open_positions:
+            return
+
+        for ticker in tickers:
+            if not ticker.midpoint() or ticker.midpoint() != ticker.midpoint():
+                continue
+            mid = ticker.midpoint()
+            pair_symbol = ticker.contract.localSymbol.replace(".", "")  # "AUD.USD" → "AUDUSD"
+
+            for entry_id, pos in list(self._open_positions.items()):
+                if pos["pair"].upper() != pair_symbol.upper():
+                    continue
+
+                pip = PIP_SIZE.get(pos["pair"].upper(), 0.0001)
+                if pos["side"] == "BUY":
+                    current_pips = (mid - pos["entry_price"]) / pip
+                else:
+                    current_pips = (pos["entry_price"] - mid) / pip
+
+                # Alert every N pips of movement from last alert
+                pips_since_alert = current_pips - pos["last_alert_pips"]
+                if abs(pips_since_alert) >= self._pnl_alert_threshold:
+                    quote_rate = 1.0 if pos["pair"].upper().endswith("USD") else self.quote_per_usd
+                    pv = pip_value_per_lot(pos["pair"], quote_rate)
+                    pnl_usd = current_pips * pv * pos["lot_size"]
+
+                    sign = "+" if current_pips >= 0 else ""
+                    arrow = "\U0001f7e2" if current_pips >= 0 else "\U0001f534"
+                    msg = (
+                        f"{arrow} *P&L UPDATE* — {pos['pair']} `{pos['side']}`\n"
+                        f"Entry: `{pos['entry_price']}` | Now: `{mid}`\n"
+                        f"{sign}{current_pips:.1f} pips | {sign}${pnl_usd:.2f}"
+                    )
+                    notify._send(self.bot_token, self.chat_id, msg)
+                    pos["last_alert_pips"] = current_pips
+                    print(f"[Monitor] P&L update: {pos['pair']} {pos['side']} {sign}{current_pips:.1f} pips ({sign}${pnl_usd:.2f})")
 
     def _calc_pnl(
         self, side: str, entry_price: float, exit_price: float, pair: str, lot_size: float
