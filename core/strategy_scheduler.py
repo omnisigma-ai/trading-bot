@@ -19,7 +19,6 @@ from config.loader import load_config
 from core.continuous_monitor import ContinuousMonitor
 from execution.ib_trader import IBTrader
 from execution.stock_trader import StockTrader
-from exits.exit_manager import ExitManager
 from logs.trade_logger import TradeLogger
 from notifications import telegram_notifier as notify
 from risk.daily_limits import LimitBreached, check_limits
@@ -36,8 +35,8 @@ from strategy.london_breakout import (
     PIP_SIZE,
 )
 from strategy.momentum_stocks import MomentumStocksStrategy
-from strategy.opportunity_scorer import filter_opportunities, score_opportunity
-from strategy.feature_tracker import FeatureDecision, log_decision, get_summary_report
+from strategy.opportunity_scorer import filter_opportunities
+from strategy.feature_tracker import get_summary_report
 from health_server import state as health_state
 
 

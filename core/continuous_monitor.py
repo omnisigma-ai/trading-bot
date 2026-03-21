@@ -244,6 +244,7 @@ class ContinuousMonitor:
             fill_price=fill_price,
             slippage_pips=round(slippage_pips, 2),
             commission=commission,
+            fill_time=str(fill_time),
         )
         self.logger.log_execution_event(
             trade_id=db_id, ib_order_id=order_id,

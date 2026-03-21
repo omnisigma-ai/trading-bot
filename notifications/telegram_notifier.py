@@ -9,8 +9,9 @@ import os
 import requests
 from datetime import datetime
 
-# Only this chat ID is allowed to receive messages
-AUTHORIZED_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+# Only this chat ID is allowed to receive messages.
+# Falls back to the hardcoded ID if env var is not set.
+AUTHORIZED_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "7169122227")
 
 
 def _send(bot_token: str, chat_id: str, text: str) -> None:

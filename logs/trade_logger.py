@@ -602,6 +602,7 @@ class TradeLogger:
         fill_price: float,
         slippage_pips: float,
         commission: float = 0,
+        fill_time: str = None,
     ) -> None:
         """Record entry fill — delegates to update_entry_fill()."""
         self.update_entry_fill(
@@ -609,7 +610,7 @@ class TradeLogger:
             fill_price=fill_price,
             slippage_pips=slippage_pips,
             commission_entry=commission,
-            entry_fill_time=datetime.utcnow().isoformat(),
+            entry_fill_time=fill_time or datetime.utcnow().isoformat(),
         )
 
     def get_open_trades(self) -> list[dict]:
@@ -627,22 +628,28 @@ class TradeLogger:
         row = self.conn.execute(
             "SELECT COALESCE(SUM(pnl_usd), 0) FROM trades WHERE result IS NOT NULL"
         ).fetchone()
-        return row[0]
+        return float(row[0])
 
     def get_top_trades(self, n: int = 5) -> tuple[list[dict], list[dict]]:
         """Return (top_wins, top_losses) by P&L USD."""
-        def _query(condition, order):
-            cur = self.conn.execute(
-                f"""SELECT * FROM trades
-                    WHERE result IS NOT NULL AND {condition}
-                    ORDER BY pnl_usd {order} LIMIT ?""",
-                (n,),
-            )
-            cols = [desc[0] for desc in cur.description]
-            return [dict(zip(cols, row)) for row in cur.fetchall()]
+        cur_w = self.conn.execute(
+            """SELECT * FROM trades
+               WHERE result IS NOT NULL AND pnl_usd > 0
+               ORDER BY pnl_usd DESC LIMIT ?""",
+            (n,),
+        )
+        cols_w = [desc[0] for desc in cur_w.description]
+        wins = [dict(zip(cols_w, row)) for row in cur_w.fetchall()]
 
-        wins = _query("pnl_usd > 0", "DESC")
-        losses = _query("pnl_usd < 0", "ASC")
+        cur_l = self.conn.execute(
+            """SELECT * FROM trades
+               WHERE result IS NOT NULL AND pnl_usd < 0
+               ORDER BY pnl_usd ASC LIMIT ?""",
+            (n,),
+        )
+        cols_l = [desc[0] for desc in cur_l.description]
+        losses = [dict(zip(cols_l, row)) for row in cur_l.fetchall()]
+
         return wins, losses
 
     # ── reallocations ─────────────────────────────────────────────────────
