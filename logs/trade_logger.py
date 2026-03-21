@@ -446,5 +446,56 @@ class TradeLogger:
         cols = [desc[0] for desc in cur.description]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
 
+    # ── methods required by ContinuousMonitor ───────────────────────────────
+
+    def log_trade_filled(
+        self,
+        trade_id: int,
+        fill_price: float,
+        slippage_pips: float,
+        commission: float = 0,
+    ) -> None:
+        """Record entry fill — delegates to update_entry_fill()."""
+        self.update_entry_fill(
+            trade_id=trade_id,
+            fill_price=fill_price,
+            slippage_pips=slippage_pips,
+            commission_entry=commission,
+            entry_fill_time=datetime.utcnow().isoformat(),
+        )
+
+    def get_open_trades(self) -> list[dict]:
+        """Return all trades that have been filled but not yet closed."""
+        cur = self.conn.execute(
+            """SELECT * FROM trades
+               WHERE result IS NULL AND fill_price IS NOT NULL
+               ORDER BY opened_at DESC""",
+        )
+        cols = [desc[0] for desc in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+    def get_all_time_pnl(self) -> float:
+        """Sum of all closed-trade P&L in USD."""
+        row = self.conn.execute(
+            "SELECT COALESCE(SUM(pnl_usd), 0) FROM trades WHERE result IS NOT NULL"
+        ).fetchone()
+        return row[0]
+
+    def get_top_trades(self, n: int = 5) -> tuple[list[dict], list[dict]]:
+        """Return (top_wins, top_losses) by P&L USD."""
+        def _query(condition, order):
+            cur = self.conn.execute(
+                f"""SELECT * FROM trades
+                    WHERE result IS NOT NULL AND {condition}
+                    ORDER BY pnl_usd {order} LIMIT ?""",
+                (n,),
+            )
+            cols = [desc[0] for desc in cur.description]
+            return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+        wins = _query("pnl_usd > 0", "DESC")
+        losses = _query("pnl_usd < 0", "ASC")
+        return wins, losses
+
     def close(self):
         self.conn.close()
