@@ -630,6 +630,19 @@ class TradeLogger:
         ).fetchone()
         return float(row[0])
 
+    def get_all_time_stats(self) -> dict:
+        """Return win/loss/total counts and win rate for all closed trades."""
+        row = self.conn.execute(
+            """SELECT
+                   COUNT(*) as total,
+                   SUM(CASE WHEN pnl_usd > 0 THEN 1 ELSE 0 END) as wins,
+                   SUM(CASE WHEN pnl_usd <= 0 THEN 1 ELSE 0 END) as losses
+               FROM trades WHERE result IS NOT NULL"""
+        ).fetchone()
+        total, wins, losses = row[0] or 0, row[1] or 0, row[2] or 0
+        win_rate = (wins / total * 100) if total > 0 else 0
+        return {"total": total, "wins": wins, "losses": losses, "win_rate": win_rate}
+
     def get_top_trades(self, n: int = 5) -> tuple[list[dict], list[dict]]:
         """Return (top_wins, top_losses) by P&L USD."""
         cur_w = self.conn.execute(

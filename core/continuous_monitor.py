@@ -553,7 +553,15 @@ class ContinuousMonitor:
                 # DB queries
                 daily_pnl = self.logger.get_today_pnl()
                 weekly_pnl = self.logger.get_weekly_pnl()
-                all_time = self.logger.get_all_time_pnl()
+                all_time_pnl = self.logger.get_all_time_pnl()
+                all_time_stats = self.logger.get_all_time_stats()
+                all_time = {
+                    "pnl_usd": all_time_pnl,
+                    "total_trades": all_time_stats.get("total", 0),
+                    "wins": all_time_stats.get("wins", 0),
+                    "losses": all_time_stats.get("losses", 0),
+                    "win_rate": all_time_stats.get("win_rate", 0),
+                }
                 top_wins, top_losses = self.logger.get_top_trades(5)
                 open_trades = self.logger.get_open_trades()
 
