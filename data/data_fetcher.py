@@ -14,11 +14,27 @@ from pathlib import Path
 import pandas as pd
 import yfinance as yf
 from ib_insync import IB, Forex
+from core.ib_rate_limiter import throttled_qualify_contracts, throttled_req_historical_data
 
 # Yahoo Finance ticker suffixes for forex pairs
 YAHOO_TICKERS = {
+    "AUDUSD": "AUDUSD=X",
+    "EURUSD": "EURUSD=X",
+    "GBPUSD": "GBPUSD=X",
+    "USDJPY": "USDJPY=X",
+    "USDCAD": "USDCAD=X",
+    "USDCHF": "USDCHF=X",
+    "NZDUSD": "NZDUSD=X",
     "GBPJPY": "GBPJPY=X",
     "AUDJPY": "AUDJPY=X",
+    "EURJPY": "EURJPY=X",
+    "EURGBP": "EURGBP=X",
+    "EURAUD": "EURAUD=X",
+    "GBPAUD": "GBPAUD=X",
+    "EURCHF": "EURCHF=X",
+    "CADJPY": "CADJPY=X",
+    "CHFJPY": "CHFJPY=X",
+    "NZDJPY": "NZDJPY=X",
 }
 
 # IB duration string mapping for common periods
@@ -61,19 +77,14 @@ def fetch_from_ib(ib: IB, pair: str, period: str = "7d", interval: str = "1h") -
     symbol = pair[:3].upper()
     currency = pair[3:].upper()
     contract = Forex(pair=f"{symbol}{currency}")
-    ib.qualifyContracts(contract)
+    throttled_qualify_contracts(ib, contract)
 
     duration = _IB_DURATIONS.get(period, "1 W")
     bar_size = _IB_BAR_SIZES.get(interval, "1 hour")
 
-    bars = ib.reqHistoricalData(
-        contract,
-        endDateTime="",
-        durationStr=duration,
-        barSizeSetting=bar_size,
-        whatToShow="MIDPOINT",
-        useRTH=False,
-        formatDate=2,  # UTC
+    bars = throttled_req_historical_data(
+        ib, contract, duration, bar_size,
+        what_to_show="MIDPOINT", use_rth=False,
     )
 
     if not bars:

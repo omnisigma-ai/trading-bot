@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 from ib_insync import IB, Forex, Order, util
 
 from strategy.london_breakout import PIP_SIZE, Signal
+from core.ib_rate_limiter import throttled_qualify_contracts, throttled_req_tickers
 
 
 @dataclass
@@ -40,19 +41,30 @@ class BreakoutOrderGroup:
 
 
 class IBTrader:
-    def __init__(self, host: str = "127.0.0.1", port: int = 7497, client_id: int = 1):
-        self.host = host
-        self.port = port
-        self.client_id = client_id
-        self.ib = IB()
+    def __init__(self, ib_or_host="127.0.0.1", port: int = 7497, client_id: int = 1):
+        # Accept either a connected IB instance or connection params
+        if isinstance(ib_or_host, IB):
+            self.ib = ib_or_host
+            self.host = ""
+            self.port = 0
+            self.client_id = 0
+        else:
+            self.host = ib_or_host
+            self.port = port
+            self.client_id = client_id
+            self.ib = IB()
 
     def connect(self) -> None:
+        if self.ib.isConnected():
+            return
         self.ib.connect(self.host, self.port, clientId=self.client_id)
         print(f"[IB] Connected to TWS at {self.host}:{self.port}")
 
     def disconnect(self) -> None:
-        self.ib.disconnect()
-        print("[IB] Disconnected from TWS")
+        # Only disconnect if we own the connection (not shared)
+        if self.host:
+            self.ib.disconnect()
+            print("[IB] Disconnected from TWS")
 
     def get_account_balance(self) -> float:
         """Returns the net liquidation value in the account's base currency.
@@ -76,8 +88,8 @@ class IBTrader:
     def get_current_price(self, pair: str) -> float:
         """Fetch current mid price for a forex pair."""
         contract = self._get_contract(pair)
-        self.ib.qualifyContracts(contract)
-        tickers = self.ib.reqTickers(contract)
+        throttled_qualify_contracts(self.ib, contract)
+        tickers = throttled_req_tickers(self.ib, contract)
         if not tickers:
             raise RuntimeError(f"No ticker data returned for {pair}")
         price = tickers[0].midpoint()
@@ -101,7 +113,7 @@ class IBTrader:
         Returns a BreakoutOrderGroup with all 6 order IDs for the trade monitor.
         """
         contract = self._get_contract(buy_signal.pair)
-        self.ib.qualifyContracts(contract)
+        throttled_qualify_contracts(self.ib, contract)
 
         units = round(lot_size * 100_000)
         gtd = (datetime.utcnow() + timedelta(hours=expire_hours)).strftime("%Y%m%d %H:%M:%S") + " UTC"

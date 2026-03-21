@@ -36,6 +36,13 @@ PIP_SIZE = {
     "USDCAD": 0.0001,
     "USDCHF": 0.0001,
     "EURJPY": 0.01,
+    "EURGBP": 0.0001,
+    "EURAUD": 0.0001,
+    "GBPAUD": 0.0001,
+    "EURCHF": 0.0001,
+    "CADJPY": 0.01,
+    "CHFJPY": 0.01,
+    "NZDJPY": 0.01,
 }
 
 
@@ -71,7 +78,7 @@ def calculate_lot_size(
     sl_pips: float,
     quote_per_usd: float = 150.0,
     min_lot: float = 0.01,
-    max_lot: float = 0.5,
+    max_lot: float = 10.0,
     lot_step: float = 0.01,
 ) -> float:
     """

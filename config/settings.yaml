@@ -1,33 +1,351 @@
 mode: paper          # paper | live
 
+# Legacy fields (kept for backward compat — strategies section overrides)
 pairs:
   - AUDUSD
-
-risk_per_trade: 0.01  # 1% of account balance per trade
+risk_per_trade: 0.01
 
 risk_limits:
-  daily_loss_limit: 0.02        # stop trading if down 2% today
-  weekly_loss_limit: 0.05       # stop trading if down 5% this week
-  max_consecutive_losses: 3     # pause after 3 SL hits in a row
-  min_account_balance: 3000     # USD — don't trade below this balance
+  daily_loss_limit: 0.02        # stop trading if down 2% today ($20K at $1M)
+  weekly_loss_limit: 0.05       # stop trading if down 5% this week ($50K at $1M)
+  max_consecutive_losses: 5     # pause after 5 SL hits in a row (more positions = more variance)
+  min_account_balance: 500000   # USD — don't trade below $500K (50% drawdown kill switch)
   max_commission_pct: 0.10      # skip trade if commission > 10% of risk amount
   commission_per_lot: 2.0       # estimated IBKR forex commission per lot per side (USD)
 
+# Legacy strategy section (used if strategies.london_breakout not present)
 strategy:
-  asian_range_hours: 6      # hours of candles to define the Asian range
-  pip_buffer: 5             # pips above/below range for entry + SL buffer
-  tp_multiplier: 2.0        # TP = SL distance × this value
-  max_trade_duration_hours: 6  # time-based exit if still open
+  asian_range_hours: 6
+  pip_buffer: 5
+  tp_multiplier: 2.0
+  max_trade_duration_hours: 6
+
+# ── Session Windows (UTC) ─────────────────────────────────────────────
+
+sessions:
+  asian:
+    start_utc: "22:00"            # 10 PM UTC (8 AM Sydney next day)
+    end_utc: "06:00"              # 6 AM UTC (4 PM Sydney)
+  london:
+    start_utc: "07:00"            # 7 AM UTC (8 AM London)
+    end_utc: "16:00"              # 4 PM UTC (5 PM London)
+  newyork:
+    start_utc: "12:00"            # 12 PM UTC (8 AM New York)
+    end_utc: "21:00"              # 9 PM UTC (5 PM New York)
+
+# ── Multi-Strategy Config ──────────────────────────────────────────────
+
+strategies:
+  london_breakout:
+    enabled: true
+    session: "london"
+    pairs: ["AUDUSD", "EURUSD", "GBPUSD", "NZDUSD", "USDCAD", "EURGBP", "EURJPY", "GBPJPY"]
+    risk_per_trade: 0.005         # 0.5% per trade ($5K at $1M)
+    asian_range_hours: 6
+    pip_buffer: 5
+    tp_multiplier: 2.0
+    max_trade_duration_hours: 6
+    adaptive_tp: true             # use dynamic TP on compressed ranges
+    exit_strategy: "trailing"     # fixed | trailing | partial_scale_out
+    trailing_stop:
+      type: "step"                # step trail: move SL at each 1R increment
+      step_size_r: 1.0
+    schedule:
+      run_times:
+        - "08:00"                 # Sydney/Tokyo session
+        - "17:00"                 # London breakout (pre-open)
+        - "23:00"                 # NY overlap session
+      timezone: "Australia/Sydney"
+
+  asian_breakout:
+    enabled: true
+    session: "asian"
+    pairs: ["AUDUSD", "USDJPY", "AUDJPY", "NZDUSD", "NZDJPY", "CADJPY"]
+    risk_per_trade: 0.005
+    range_lookback_hours: 4       # shorter Asian consolidation
+    pip_buffer: 3
+    tp_multiplier: 2.0
+    max_trade_duration_hours: 8
+    exit_strategy: "trailing"
+    trailing_stop:
+      type: "step"
+      step_size_r: 1.0
+    schedule:
+      run_times:
+        - "23:00"                 # 11 PM UTC = Asian session start
+      timezone: "UTC"
+
+  session_trend:
+    enabled: true
+    session: "newyork"
+    continuous_scan: true         # scan every 15 min during NY session
+    scan_interval_minutes: 15
+    pairs: ["EURUSD", "GBPUSD", "AUDUSD", "USDCAD", "EURGBP", "EURAUD"]
+    risk_per_trade: 0.005
+    min_london_move_pips: 20
+    retracement_pct: 0.50
+    tp_multiplier: 2.0
+    exit_strategy: "trailing"
+    trailing_stop:
+      type: "step"
+      step_size_r: 1.0
+    schedule:
+      run_times:
+        - "13:02"                 # 1:02 PM UTC = NY early session (staggered)
+      timezone: "UTC"
+
+  momentum_stocks:
+    enabled: true
+    symbols:
+      # Mega-caps
+      - AAPL
+      - MSFT
+      - NVDA
+      - AMZN
+      - GOOGL
+      - META
+      - TSLA
+      # Semiconductors
+      - AMD
+      - AVGO
+      - QCOM
+      - MRVL
+      - ANET
+      # Software / Cloud
+      - CRM
+      - NFLX
+      - ADBE
+      - NOW
+      - SNPS
+      - PANW
+      # Financials
+      - GS
+      - JPM
+      - V
+      - MA
+      # Healthcare
+      - LLY
+      - UNH
+      - ISRG
+      - ABBV
+      # Industrials / Energy
+      - CAT
+      - DE
+      - GE
+      - XOM
+      - CVX
+      # Consumer
+      - COST
+      - HD
+      - NKE
+      - SBUX
+      # High-momentum
+      - PLTR
+      - COIN
+      - UBER
+      - CRWD
+    risk_per_trade: 0.005         # 0.5% per stock trade ($5K at $1M)
+    max_positions: 8
+    min_volume_ratio: 1.5
+    breakout_lookback_days: 20
+    exit_strategy: "partial_scale_out"
+    trailing_stop:
+      type: "chandelier"
+      atr_period: 14
+      atr_multiplier: 2.0
+    partial_exits:
+      - pct: 50
+        at_rr: 1.5
+        action: "reallocate"      # 50% of profits → ETF portfolio
+      - pct: 50
+        at_rr: 999                # remaining 50% trails until stopped
+        action: "close"
+    schedule:
+      run_times:
+        - "23:30"                 # US market open (9:30 AM ET ≈ 11:30 PM AEST)
+      timezone: "Australia/Sydney"
+
+  futures_breakout:
+    enabled: true
+    symbols: ["MES", "MNQ", "MYM", "M2K", "MGC", "MCL", "MBT"]  # micro contracts
+    risk_per_trade: 0.005           # 0.5% = $5K per trade
+    range_hours: 6
+    buffer_points: 2.0             # points above/below range
+    tp_multiplier: 2.0
+    min_range_points: 5.0          # minimum range to trade
+    exit_strategy: "trailing"
+    trailing_stop:
+      type: "step"
+      step_size_r: 1.0
+    schedule:
+      run_times:
+        - "07:33"                  # London open breakout (staggered)
+        - "13:33"                  # NY open breakout (staggered)
+      timezone: "UTC"
+
+  forex_mean_reversion:
+    enabled: true
+    session: "london"
+    continuous_scan: true
+    scan_interval_minutes: 30
+    pairs: ["EURUSD", "GBPUSD", "AUDUSD", "USDJPY", "USDCAD", "EURCHF", "GBPAUD", "EURAUD"]
+    risk_per_trade: 0.005
+    bb_period: 20
+    bb_std_dev: 2.0
+    rsi_period: 14
+    rsi_oversold: 30
+    rsi_overbought: 70
+    atr_sl_multiplier: 1.5
+    exit_strategy: "trailing"
+    trailing_stop:
+      type: "step"
+      step_size_r: 0.5              # tighter steps for mean reversion
+    schedule:
+      run_times:
+        - "08:05"                  # staggered from london_breakout 08:00
+        - "14:05"
+        - "20:05"
+      timezone: "UTC"
+
+# ── Opportunity Scoring ────────────────────────────────────────────────
+
+scoring:
+  min_asymmetry_score: 0.5        # minimum score to accept a trade
+  min_rr_ratio: 1.5               # minimum risk:reward ratio
+  min_expected_value: 0.0         # minimum EV per dollar risked (0 = breakeven)
+  # No hard trade cap — correlation filter + portfolio risk limits control exposure
+
+# ── Stock Sector Map (for correlation detection) ─────────────────────────
+
+stock_sectors:
+  # Technology
+  AAPL: technology
+  MSFT: technology
+  GOOGL: technology
+  META: technology
+  CRM: technology
+  ADBE: technology
+  NOW: technology
+  SNPS: technology
+  PANW: technology
+  PLTR: technology
+  CRWD: technology
+  # Semiconductors
+  NVDA: semiconductor
+  AMD: semiconductor
+  AVGO: semiconductor
+  QCOM: semiconductor
+  MRVL: semiconductor
+  ANET: semiconductor
+  # Consumer
+  AMZN: consumer
+  TSLA: consumer
+  NFLX: consumer
+  COST: consumer
+  HD: consumer
+  NKE: consumer
+  SBUX: consumer
+  UBER: consumer
+  # Financials
+  GS: financials
+  JPM: financials
+  V: financials
+  MA: financials
+  COIN: financials
+  # Healthcare
+  LLY: healthcare
+  UNH: healthcare
+  ISRG: healthcare
+  ABBV: healthcare
+  # Industrials
+  CAT: industrials
+  DE: industrials
+  GE: industrials
+  # Energy
+  XOM: energy
+  CVX: energy
+
+# ── Exit Strategy Defaults ─────────────────────────────────────────────
+
+exit_defaults:
+  breakeven_at_rr: 1.0            # move SL to breakeven at 1R profit
+  trailing_activation_rr: 1.5     # start trailing after 1.5R
+  min_stop_change_pips: 1.0       # throttle: only modify SL if change >= 1 pip
+
+# ── Profit Reallocation ───────────────────────────────────────────────
+
+reallocation:
+  enabled: true
+  pct: 0.50                       # 50% of profits → long-term investments
+  min_purchase_aud: 50            # accumulate until this threshold (AUD)
+  currency: AUD                   # AU-domiciled, ASX-listed
+  deploy_strategy: "dip"          # "dip" = wait for macro dip | "weekly" = every Friday
+  max_wait_days: 30               # force deploy after N days without a dip
+  dip_thresholds:
+    vix_level: 25                 # VIX > 25 = market fear
+    vix_5d_change_pct: 30         # VIX spiked 30%+ in 5 days
+    gold_5d_change_pct: 3         # gold up 3%+ (flight to safety)
+    oil_5d_change_pct: -10        # oil down 10%+ (demand destruction)
+    aud_usd_5d_change_pct: -2     # AUD down 2%+ (global risk-off)
+    dxy_5d_change_pct: 2          # USD up 2%+ (dollar strength)
+    min_triggers: 2               # need 2+ indicators to confirm dip
+  etf_allocation:
+    VGS: 0.60                     # Vanguard MSCI Intl Shares (AU domiciled, ASX)
+    VAS: 0.30                     # Vanguard Australian Shares (ASX 200, franking credits)
+  value_stock_allocation: 0.10    # 10% → EV-scored undervalued ASX stock
+
+# ── Value Stock Selection (EV Scoring) ───────────────────────────────────
+
+value_stock:
+  enabled: true
+  max_position_aud: 500           # max total investment per single stock
+  cache_hours: 24                 # yfinance cache validity
+  min_composite_score: 40         # minimum EV score to consider (0-100)
+  min_moat: "NARROW"              # WIDE or NARROW required
+  weights:
+    valuation: 0.40
+    quality: 0.40
+    safety: 0.20
+  snowflake:
+    enabled: true
+    weight: 0.20                    # 20% of composite = snowflake, 80% = percentile
+    min_snowflake_score: 12         # minimum 12/30 checks to consider (40%)
+    dcf:
+      risk_free_rate: 0.042         # AU 10Y bond yield
+      equity_risk_premium: 0.055    # AU market
+      terminal_growth_rate: 0.025   # long-run GDP growth
+      stage1_years: 5
+    market_assumptions:
+      savings_rate: 0.0435          # AU savings rate
+      inflation_rate: 0.025         # RBA target
+  universe:                       # curated ASX large-caps (user-maintained)
+    resources: [BHP, RIO, FMG, WDS]
+    banks: [WBC, ANZ, NAB, MQG]
+    healthcare: [CSL, COH, RMD, SHL]
+    infrastructure: [TCL, APA]
+    consumer: [WES, WOW, COL, JBH]
+    tech: [XRO, WTC, TNE, CPU]
+    insurance: [QBE, IAG, SUN]
+    industrials: [BXB, AMC]
+    reits: [GMG, SCG, GPT]
+    telecoms: [TLS]
+
+# ── Portfolio Risk Limits ──────────────────────────────────────────────
+
+portfolio_limits:
+  max_total_risk_pct: 0.06        # max 6% of account at risk simultaneously ($60K at $1M)
+  max_forex_positions: 8
+  max_stock_positions: 8
+  max_futures_positions: 6
+  max_total_positions: 20         # hard cap across all instrument types
+
+# ── Schedule (legacy — each strategy has its own schedule now) ─────────
 
 schedule:
-  # AUDUSD peak sessions (Sydney time):
-  #   08:00 = Sydney open (Asian session start)
-  #   17:00 = London pre-open (original strategy time)
-  #   23:00 = NY session overlap
   run_times:
-    - "08:00"     # Sydney/Tokyo session
-    - "17:00"     # London breakout (pre-open)
-    - "23:00"     # NY overlap session
+    - "08:00"
+    - "17:00"
+    - "23:00"
   timezone: "Australia/Sydney"
 
 ib:
@@ -37,10 +355,16 @@ ib:
   client_id: 1
 
 telegram:
-  bot_token: "YOUR_TELEGRAM_BOT_TOKEN_HERE"
-  chat_id: "YOUR_TELEGRAM_CHAT_ID_HERE"
+  bot_token: "8457279628:AAHmd9rgpW-f2ZA4HfVKZ6WHb-4gA_Xu6lk"
+  chat_id: "7169122227"
 
 tax:
-  default_usd_aud_rate: 1.54  # fallback if IB rate unavailable
+  default_usd_aud_rate: 1.54
+
+# ── Connection (24/7 persistent IB connection) ──────────────────────────
+
+connection:
+  reconnect_delay_initial: 5      # seconds before first reconnect attempt
+  reconnect_delay_max: 60         # max backoff delay
 
 db_path: "logs/trades.db"
