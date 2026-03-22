@@ -73,8 +73,46 @@ def _build_strategy_registry():
 
 STRATEGIES = _build_strategy_registry()
 
+# Map strategy name → instrument type for market-hours gating
+STRATEGY_INSTRUMENT = {
+    "london_breakout": "forex",
+    "asian_breakout": "forex",
+    "session_trend": "forex",
+    "forex_mean_reversion": "forex",
+    "momentum_stocks": "stocks",
+    "futures_breakout": "futures",
+}
+
 
 # ── Session Utilities ─────────────────────────────────────────────────────
+
+def _is_market_open(instrument_type: str = "forex") -> bool:
+    """
+    Check if the market is open for the given instrument type.
+
+    Forex: closed from Friday ~22:00 UTC to Sunday ~22:00 UTC.
+    Stocks/futures: closed on Saturday and Sunday (exchange hours
+    are already gated by session windows).
+    """
+    now = datetime.utcnow()
+    weekday = now.weekday()  # 0=Mon ... 6=Sun
+    hour = now.hour
+
+    if instrument_type == "forex":
+        # Friday after 22:00 UTC → closed
+        if weekday == 4 and hour >= 22:
+            return False
+        # All of Saturday → closed
+        if weekday == 5:
+            return False
+        # Sunday before 22:00 UTC → closed
+        if weekday == 6 and hour < 22:
+            return False
+        return True
+
+    # Stocks, futures, ETFs — simple weekday check
+    return weekday < 5
+
 
 def _is_in_session(session_cfg: dict, sessions: dict) -> bool:
     """Check if current UTC time is within a session window."""
@@ -216,6 +254,10 @@ class StrategyScheduler:
             wait = _seconds_until(time_str, tz)
             print(f"[Scheduler] {strat_name} next run in {wait/3600:.1f}h ({time_str} {tz})")
             await asyncio.sleep(wait)
+            inst = STRATEGY_INSTRUMENT.get(strat_name, "forex")
+            if not _is_market_open(inst):
+                print(f"[Scheduler] {strat_name} skipped — {inst} market closed")
+                continue
             await self._run_strategy_pipeline(strat_name)
 
     async def _continuous_scan_loop(
@@ -224,7 +266,8 @@ class StrategyScheduler:
     ) -> None:
         """Scan for setups every N minutes during active session."""
         while True:
-            if _is_in_session(strat_cfg, sessions):
+            inst = STRATEGY_INSTRUMENT.get(strat_name, "forex")
+            if _is_market_open(inst) and _is_in_session(strat_cfg, sessions):
                 await self._run_strategy_pipeline(strat_name)
             await asyncio.sleep(interval_min * 60)
 
